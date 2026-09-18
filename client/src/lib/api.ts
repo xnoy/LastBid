@@ -29,6 +29,63 @@ export function setToken(token: string | null): void {
   else localStorage.removeItem(TOKEN_KEY);
 }
 
+import {
+  DEMO_AUCTIONS,
+  getFallbackHomeFeed,
+  getFallbackBidTok,
+  getFallbackAuctionDetail,
+} from './mockData';
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function getFallbackData(path: string): any {
+  if (path === '/auctions/home' || path.startsWith('/auctions/home?')) {
+    return getFallbackHomeFeed();
+  }
+  if (path === '/auctions/feed/bidtok' || path.startsWith('/auctions/feed/bidtok?')) {
+    return getFallbackBidTok();
+  }
+  if (path.startsWith('/auctions/')) {
+    const slug = path.replace('/auctions/', '').split('?')[0];
+    return { auction: getFallbackAuctionDetail(slug) };
+  }
+  if (path === '/auctions' || path.startsWith('/auctions?')) {
+    return {
+      items: DEMO_AUCTIONS,
+      total: DEMO_AUCTIONS.length,
+      page: 1,
+      perPage: 24,
+      hasMore: false,
+    };
+  }
+  if (path === '/live' || path.startsWith('/live?')) {
+    return {
+      sessions: [
+        {
+          id: 'live-fashion-1',
+          title: '👟 Fashion Drops: Air Jordan 1 & Streetwear Grails',
+          status: 'LIVE',
+          thumbnailUrl: DEMO_AUCTIONS[0].images[0],
+          auction: DEMO_AUCTIONS[0],
+        },
+        {
+          id: 'live-tech-1',
+          title: '🎮 Exclusive Tech: Razer Esports & Setup Vault',
+          status: 'LIVE',
+          thumbnailUrl: DEMO_AUCTIONS[1].images[0],
+          auction: DEMO_AUCTIONS[1],
+        },
+      ],
+    };
+  }
+  if (path.startsWith('/watchlist')) {
+    return { items: [] };
+  }
+  if (path.startsWith('/notifications')) {
+    return { items: [] };
+  }
+  return null;
+}
+
 export async function api<T>(
   path: string,
   options: RequestInit & { json?: unknown } = {},
@@ -36,23 +93,33 @@ export async function api<T>(
   const { json, headers, ...rest } = options;
   const token = getToken();
 
-  const response = await fetch(`${BASE}/api${path}`, {
-    ...rest,
-    headers: {
-      ...(json !== undefined ? { 'content-type': 'application/json' } : {}),
-      ...(token ? { authorization: `Bearer ${token}` } : {}),
-      ...headers,
-    },
-    body: json !== undefined ? JSON.stringify(json) : rest.body,
-  });
+  try {
+    const response = await fetch(`${BASE}/api${path}`, {
+      ...rest,
+      headers: {
+        ...(json !== undefined ? { 'content-type': 'application/json' } : {}),
+        ...(token ? { authorization: `Bearer ${token}` } : {}),
+        ...headers,
+      },
+      body: json !== undefined ? JSON.stringify(json) : rest.body,
+    });
 
-  if (response.status === 204) return undefined as T;
+    if (response.ok) {
+      if (response.status === 204) return undefined as T;
+      const payload = (await response.json().catch(() => null)) as T;
+      return payload;
+    }
 
-  const payload = (await response.json().catch(() => null)) as
-    | { error?: { code: string; message: string; details?: Record<string, unknown> } }
-    | null;
+    // If server returned 404, 502, or 500 (e.g. on Vercel without backend connected), check for fallback data
+    const fallback = getFallbackData(path);
+    if (fallback !== null) {
+      return fallback as T;
+    }
 
-  if (!response.ok) {
+    const payload = (await response.json().catch(() => null)) as
+      | { error?: { code: string; message: string; details?: Record<string, unknown> } }
+      | null;
+
     const error = payload?.error;
     let fallbackMessage = 'Something went wrong. Try again.';
     if (response.status === 502 || response.status === 504 || (response.status === 500 && !payload)) {
@@ -64,9 +131,13 @@ export async function api<T>(
       error?.message ?? fallbackMessage,
       error?.details,
     );
+  } catch (err) {
+    const fallback = getFallbackData(path);
+    if (fallback !== null) {
+      return fallback as T;
+    }
+    throw err;
   }
-
-  return payload as T;
 }
 
 /** Stable token so a retried bid is recognised as the same bid, not a new one. */

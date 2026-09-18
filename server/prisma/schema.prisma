@@ -1,0 +1,278 @@
+// BidNova data model.
+// Postgres is the source of truth for everything durable.
+// Redis mirrors only the *hot* fields of an ACTIVE auction (price, leader,
+// deadline) so that bids can be validated and applied atomically in one hop.
+// See src/services/bid.service.ts for how the two stay consistent.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  USER
+  ADMIN
+}
+
+enum AuctionStatus {
+  SCHEDULED // created, not started yet
+  ACTIVE    // accepting bids
+  ENDED     // clock hit zero, being settled
+  SOLD      // winner determined, reserve met
+  UNSOLD    // ended with no bids, or reserve not met
+  CANCELLED // pulled by seller or admin
+}
+
+enum ItemCondition {
+  NEW
+  LIKE_NEW
+  EXCELLENT
+  GOOD
+  FAIR
+  FOR_PARTS
+}
+
+enum OrderStatus {
+  PAYMENT_PENDING
+  ORDER_CONFIRMED
+  PREPARING
+  SHIPPED
+  IN_TRANSIT
+  OUT_FOR_DELIVERY
+  DELIVERED
+  CANCELLED
+}
+
+enum NotificationType {
+  OUTBID
+  AUCTION_WON
+  AUCTION_LOST
+  AUCTION_ENDING
+  AUCTION_SOLD
+  RESERVE_MET
+  ORDER_UPDATE
+  LIVE_STARTED
+}
+
+enum LiveStatus {
+  SCHEDULED
+  LIVE
+  ENDED
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  username     String   @unique
+  displayName  String
+  passwordHash String
+  role         Role     @default(USER)
+  avatarUrl    String?
+  bio          String?
+  location     String?
+  // Public seller reputation, recomputed on order completion.
+  ratingAvg    Float    @default(0)
+  ratingCount  Int      @default(0)
+  createdAt    DateTime @default(now())
+
+  auctions      Auction[]      @relation("SellerAuctions")
+  wonAuctions   Auction[]      @relation("WinnerAuctions")
+  bids          Bid[]
+  autoBids      AutoBid[]
+  watchlist     WatchlistItem[]
+  notifications Notification[]
+  ordersBought  Order[]        @relation("BuyerOrders")
+  ordersSold    Order[]        @relation("SellerOrders")
+  liveSessions  LiveSession[]
+  chatMessages  LiveChatMessage[]
+}
+
+model Auction {
+  id           String        @id @default(cuid())
+  slug         String        @unique
+  title        String
+  description  String
+  category     String        // slug from src/shared/categories.ts
+  subcategory  String
+  images       String[]
+  videoUrl     String?       // vertical clip that powers the BidTok feed
+  condition    ItemCondition @default(GOOD)
+  location     String
+  shippingInfo String
+  shippingCost Int           @default(0) // minor units (paise)
+
+  // --- Money. Every amount is an integer in paise to avoid float drift. ---
+  startPrice   Int
+  minIncrement Int
+  reservePrice Int? // private to the seller; only "met / not met" is public
+  currentBid   Int  @default(0)
+  bidCount     Int  @default(0)
+
+  status    AuctionStatus @default(ACTIVE)
+  startsAt  DateTime      @default(now())
+  endsAt    DateTime
+  endedAt   DateTime?
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+
+  sellerId String
+  seller   User   @relation("SellerAuctions", fields: [sellerId], references: [id], onDelete: Cascade)
+
+  winnerId String?
+  winner   User?   @relation("WinnerAuctions", fields: [winnerId], references: [id])
+
+  bids        Bid[]
+  autoBids    AutoBid[]
+  watchers    WatchlistItem[]
+  order       Order?
+  liveSession LiveSession?
+
+  // Discovery queries all hit these.
+  @@index([status, endsAt])
+  @@index([category, status])
+  @@index([sellerId, status])
+}
+
+model Bid {
+  id        String   @id @default(cuid())
+  auctionId String
+  auction   Auction  @relation(fields: [auctionId], references: [id], onDelete: Cascade)
+  bidderId  String
+  bidder    User     @relation(fields: [bidderId], references: [id], onDelete: Cascade)
+  amount    Int
+  // True when the proxy engine raised this bid on the user's behalf.
+  isAuto    Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  // Idempotency token sent by the client. Unique per auction, so a retried
+  // request (double tap, flaky network) can never create a second bid.
+  requestId String?
+
+  @@unique([auctionId, requestId])
+  @@index([auctionId, createdAt])
+  @@index([bidderId, createdAt])
+}
+
+/// A user's private maximum. NEVER serialised to anyone but its owner.
+model AutoBid {
+  id        String   @id @default(cuid())
+  auctionId String
+  auction   Auction  @relation(fields: [auctionId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  maxAmount Int
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([auctionId, userId])
+}
+
+model WatchlistItem {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  auctionId String
+  auction   Auction  @relation(fields: [auctionId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([userId, auctionId])
+}
+
+model Notification {
+  id        String           @id @default(cuid())
+  userId    String
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      NotificationType
+  title     String
+  body      String
+  auctionId String?
+  read      Boolean          @default(false)
+  createdAt DateTime         @default(now())
+
+  @@index([userId, read, createdAt])
+}
+
+model Order {
+  id        String      @id @default(cuid())
+  reference String      @unique
+  auctionId String      @unique
+  auction   Auction     @relation(fields: [auctionId], references: [id], onDelete: Cascade)
+  buyerId   String
+  buyer     User        @relation("BuyerOrders", fields: [buyerId], references: [id])
+  sellerId  String
+  seller    User        @relation("SellerOrders", fields: [sellerId], references: [id])
+
+  itemTotal    Int
+  shippingCost Int
+  total        Int
+  status       OrderStatus @default(PAYMENT_PENDING)
+
+  shippingName    String?
+  shippingAddress String?
+  shippingCity    String?
+  shippingPostal  String?
+  shippingPhone   String?
+  courier         String?
+  trackingNumber  String?
+  estimatedDelivery DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  events OrderEvent[]
+
+  @@index([buyerId, createdAt])
+  @@index([sellerId, createdAt])
+}
+
+model OrderEvent {
+  id        String      @id @default(cuid())
+  orderId   String
+  order     Order       @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  status    OrderStatus
+  note      String
+  location  String?
+  createdAt DateTime    @default(now())
+
+  @@index([orderId, createdAt])
+}
+
+model LiveSession {
+  id        String     @id @default(cuid())
+  title     String
+  status    LiveStatus @default(SCHEDULED)
+  hostId    String
+  host      User       @relation(fields: [hostId], references: [id], onDelete: Cascade)
+  auctionId String     @unique
+  auction   Auction    @relation(fields: [auctionId], references: [id], onDelete: Cascade)
+
+  // Filled in by the streaming provider adapter (src/services/streaming).
+  playbackUrl    String?
+  ingestUrl      String?
+  providerStream String?
+
+  thumbnailUrl String?
+  viewerCount  Int      @default(0)
+  startedAt    DateTime?
+  endedAt      DateTime?
+  createdAt    DateTime @default(now())
+
+  messages LiveChatMessage[]
+}
+
+model LiveChatMessage {
+  id        String      @id @default(cuid())
+  sessionId String
+  session   LiveSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  body      String
+  createdAt DateTime    @default(now())
+
+  @@index([sessionId, createdAt])
+}

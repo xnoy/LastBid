@@ -1,0 +1,21 @@
+{
+  "name": "bidnova",
+  "private": true,
+  "version": "0.1.0",
+  "description": "BidNova - real-time auction marketplace (monorepo root)",
+  "workspaces": ["server", "client"],
+  "scripts": {
+    "dev": "concurrently -n server,client -c magenta,cyan \"npm --workspace server run dev\" \"npm --workspace client run dev\"",
+    "build": "npm --workspace server run build && npm --workspace client run build",
+    "start": "npm --workspace server run start",
+    "setup": "npm install && npm --workspace server run prisma:generate && npm --workspace server run prisma:migrate && npm --workspace server run seed",
+    "typecheck": "npm --workspace server run typecheck && npm --workspace client run typecheck",
+    "seed": "npm --workspace server run seed",
+    "infra:up": "./run-infra.sh",
+    "infra:down": "sudo docker stop bidnova-postgres bidnova-redis"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  },
+  "engines": { "node": ">=20" }
+}

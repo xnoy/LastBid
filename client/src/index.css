@@ -1,0 +1,167 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+  BidNova palette.
+  Dark is the default because auctions are watched at night and the price needs
+  to be the brightest thing on screen. Values are raw RGB triples so Tailwind
+  can apply opacity modifiers.
+*/
+:root {
+  --canvas: 247 248 252;
+  --surface: 255 255 255;
+  --raised: 241 243 249;
+  --line: 224 227 238;
+  --ink: 12 16 32;
+  --muted: 98 106 130;
+  --bid: 96 74 240;
+  --win: 5 160 110;
+  --urgent: 226 44 82;
+  --gold: 176 122 10;
+  --shadow: 26 32 56;
+}
+
+.dark {
+  --canvas: 10 13 24;
+  --surface: 18 23 41;
+  --raised: 26 32 56;
+  --line: 38 45 71;
+  --ink: 237 240 250;
+  --muted: 142 151 178;
+  --bid: 124 105 255;
+  --win: 18 209 142;
+  --urgent: 255 77 109;
+  --gold: 255 194 75;
+  --shadow: 0 0 0;
+}
+
+* {
+  border-color: rgb(var(--line));
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  @apply bg-canvas text-ink font-sans antialiased;
+  margin: 0;
+  min-height: 100dvh;
+}
+
+/* Prices and countdowns must not jitter as digits change width. */
+.tabular {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum';
+}
+
+/* Visible focus everywhere, without the default double outline. */
+:focus-visible {
+  outline: 2px solid rgb(var(--bid));
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+::selection {
+  background: rgb(var(--bid) / 0.28);
+}
+
+/* Thin, unobtrusive scrollbars for the horizontal rails. */
+.rail {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(var(--line)) transparent;
+}
+.rail::-webkit-scrollbar {
+  height: 6px;
+}
+.rail::-webkit-scrollbar-thumb {
+  background: rgb(var(--line));
+  border-radius: 999px;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+@layer components {
+  .card {
+    @apply bg-surface border border-line rounded-card;
+  }
+
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-pill font-semibold
+           transition-colors duration-150 disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+
+  .btn-primary {
+    @apply btn bg-bid text-white hover:bg-bid/90 px-5 py-2.5;
+  }
+
+  .btn-ghost {
+    @apply btn border border-line text-ink hover:bg-raised px-4 py-2;
+  }
+
+  .btn-quiet {
+    @apply btn text-muted hover:text-ink hover:bg-raised px-3 py-2;
+  }
+
+  .field {
+    @apply w-full rounded-xl border border-line bg-canvas px-4 py-2.5 text-ink
+           placeholder:text-muted/70 focus:border-bid focus:outline-none;
+  }
+
+  .label {
+    @apply block text-sm font-medium text-ink mb-1.5;
+  }
+
+  .hint {
+    @apply text-sm text-muted;
+  }
+
+  .pill {
+    @apply inline-flex items-center gap-1.5 rounded-pill px-2.5 py-1 text-xs font-semibold;
+  }
+
+  /* Ambient Neon utilities */
+  .neon-glow-container {
+    transition: background-color 0.5s ease, border-color 0.5s ease, box-shadow 0.5s ease;
+  }
+
+  .glow-text-gold {
+    text-shadow: 0 0 14px rgba(255, 184, 0, 0.5);
+  }
+  .glow-text-cyan {
+    text-shadow: 0 0 14px rgba(0, 240, 255, 0.5);
+  }
+  .glow-text-purple {
+    text-shadow: 0 0 14px rgba(168, 85, 247, 0.5);
+  }
+  .glow-text-pink {
+    text-shadow: 0 0 14px rgba(255, 0, 85, 0.5);
+  }
+  .glow-text-emerald {
+    text-shadow: 0 0 14px rgba(16, 185, 129, 0.5);
+  }
+
+  .luxury-gold-border {
+    border: 1px solid rgba(255, 184, 0, 0.45);
+    box-shadow: 0 0 25px -4px rgba(255, 184, 0, 0.25);
+  }
+}
+
+/* Motion is used to show what changed, so respect the OS preference. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
